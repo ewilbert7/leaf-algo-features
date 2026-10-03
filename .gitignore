@@ -1,4 +1,5 @@
 .venv/
 .env
 exp-*/
+data/raw/
 .DS_Store
