@@ -12,7 +12,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 TABLE = ROOT / "data" / "sbox_table.csv"
 
-NON_FEATURE_COLS = ["id", "run", "generation", "fitness", "parent_ids", "code"]
+NON_FEATURE_COLS = ["id", "run", "llm", "benchmark", "repeat", "generation", "fitness", "parent_ids", "code"]
 
 table = pd.read_csv(TABLE)
 print("Table shape:", table.shape)
@@ -73,7 +73,7 @@ print("Dummy R2 (GroupKFold):", r2_score(y, preds))
 run more experiments with different random seeds for the cross validation of the splitting
 report the standard deviation 
 add storage of every result for repetition
-run the XGBoost with teh default paraemters except random_State keep it 0
+run the XGBoost with the default paraemters except random_State keep it 0
 autoGluon, try this in addition to XGBoost 
 find an automation framework with scikit-learn to make this easier
 consider training using parents for later children??

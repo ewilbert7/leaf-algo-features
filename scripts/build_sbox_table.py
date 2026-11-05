@@ -1,4 +1,5 @@
 import glob
+import hashlib
 import json
 import time
 import warnings
@@ -14,9 +15,14 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, module="networkx")
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "data" / "sbox_features_cache.pkl"
 OUT = ROOT / "data" / "sbox_table.csv"
+FAILURES_OUT = ROOT / "data" / "sbox_failures.csv"
+
+# e.g. run-LLaMEA-gemini-2.0-flash-SBOX_COST_fid21-4
+RUN_NAME = r"^run-LLaMEA-(?P<llm>.+)-SBOX_COST_(?P<benchmark>.+)-(?P<repeat>\d+)$"
 
 rows = []
-for log_path in glob.glob(str(ROOT / "data/raw/SBOX/*/log.jsonl")):
+# sorted so the row order doesn't depend on the filesystem
+for log_path in sorted(glob.glob(str(ROOT / "data/raw/SBOX/*/log.jsonl"))):
     run_id = Path(log_path).parent.name  
     with open(log_path) as f:
         for line in f:
@@ -25,6 +31,11 @@ for log_path in glob.glob(str(ROOT / "data/raw/SBOX/*/log.jsonl")):
             rows.append(record)
 
 df = pd.DataFrame(rows)
+
+run_parts = df["run"].str.extract(RUN_NAME)
+if run_parts.isna().any(axis=None):
+    raise ValueError(f"Unexpected run names: {df.loc[run_parts.isna().any(axis=1), 'run'].unique()}")
+df = pd.concat([df, run_parts], axis=1)
 
 df["fitness"] = pd.to_numeric(df["fitness"], errors="coerce")
 
@@ -44,19 +55,46 @@ def safe_features(code):
         print("Error extracting features:", e)
         return None
 
+def code_key(code):
+    return hashlib.sha256(code.encode()).hexdigest()
+
+# the cache is keyed by a hash of the code, so a feature can't end up on the
+# wrong program if the rows change order or the raw data changes
+cache = {}
 if CACHE.exists():
-    print("Loading features from cache:", CACHE)
-    valid["features"] = pd.read_pickle(CACHE)
-else:
-    tqdm.pandas()
+    loaded = pd.read_pickle(CACHE)
+    if isinstance(loaded, dict):
+        print("Loading features from cache:", CACHE)
+        cache = loaded
+    else:
+        print("Ignoring old-format cache, re-extracting:", CACHE)
+
+keys = valid["code"].map(code_key)
+to_extract = valid.loc[~keys.isin(cache)].drop_duplicates("code")["code"]
+if len(to_extract) > 0:
     start = time.time()
-    valid["features"] = valid["code"].progress_apply(safe_features)
+    for code in tqdm(to_extract):
+        cache[code_key(code)] = safe_features(code)
     print(f"Extraction took {(time.time() - start) / 60:.1f} min")
-    valid["features"].to_pickle(CACHE)
+    pd.to_pickle(cache, CACHE)
     print("Cached features to", CACHE)
+
+valid["features"] = [cache[key] for key in keys]
 
 n_fail = valid["features"].isna().sum()
 print("Feature extraction failed:", n_fail, "of", len(valid))
+
+# failed programs stay out of the fitness table but are kept here so that
+# failure can be modelled separately later
+failed_eval = df[~np.isfinite(df["fitness"])].copy()
+failed_eval["failure_type"] = np.where(failed_eval["no_code"], "no_code", "evaluation_error")
+failed_features = valid[valid["features"].isna()].copy()
+failed_features["failure_type"] = "feature_extraction"
+failed = pd.concat([failed_eval, failed_features])
+failure_cols = ["id", "run", "llm", "benchmark", "repeat", "generation", "failure_type", "feedback", "code"]
+failed[failure_cols].to_csv(FAILURES_OUT, index=False)
+print("Failure types:\n", failed["failure_type"].value_counts())
+print("Saved", FAILURES_OUT)
 
 valid = valid[valid["features"].notna()]
 feats = pd.DataFrame(valid["features"].tolist(), index=valid.index)
@@ -64,7 +102,7 @@ feats = pd.DataFrame(valid["features"].tolist(), index=valid.index)
 print("Number of features:", feats.shape[1])
 
 # combine id columns and features side-by-side
-id_cols = ["id", "run", "generation", "fitness", "parent_ids", "code"]
+id_cols = ["id", "run", "llm", "benchmark", "repeat", "generation", "fitness", "parent_ids", "code"]
 missing = [c for c in id_cols if c not in valid.columns]
 if missing:
     print("Warning: these columns don't exist and were skipped:", missing)
