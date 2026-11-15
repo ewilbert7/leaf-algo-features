@@ -115,6 +115,7 @@ def feature_columns(table):
     return [c for c in features if table[c].nunique() > 1]
 
 
+# stratified* have a look
 def make_folds(table, split, seed):
     # return (train positions, test positions) pairs for one split strategy
     group_col = SPLIT_GROUPS[split]
@@ -131,6 +132,7 @@ def make_folds(table, split, seed):
     return list(splitter.split(table, groups=groups))
 
 
+# is there a way to this more efficiently using library functions
 def cross_validate(table, features, make_model, split, seed, labels):
     rows = []
 
@@ -284,3 +286,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+TSP - travelling sales person problem
+
+use already available results where possible and look for more data
+consider different data to the MA_BBOB (other optimization problems)
+add visualizations to show the results better
+
+open weight llms vs apis for embeddings
+if you don't redo the data then you can use the apis as 
+the rate-limits would be okay over a long period of time
+both? to make the project stronger
+
+priority:
+- commercial llm embeddings
+- better visualizations to better see results that are buried in the csvs
+- open-weight llms
+- applying some "explainable ai", SHAP to get insight into what's most important (for the report)
+
+bbob: all one benchmark
+"""

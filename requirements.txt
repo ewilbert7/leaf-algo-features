@@ -1,3 +1,8 @@
-llamea
-numpy
-pandas
+llamea==1.2.0
+numpy==2.5.3
+pandas==3.0.6
+scikit-learn==1.9.1
+scipy==1.18.1
+tqdm==4.70.1
+xgboost==2.1.4
+matplotlib==3.11.2
