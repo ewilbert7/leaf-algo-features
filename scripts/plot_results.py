@@ -1,9 +1,11 @@
+import json
 import sys
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")  # save to files only, no window
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 
@@ -55,6 +57,63 @@ def plot_benchmarks(by_benchmark, out):
     fig.tight_layout()
     fig.savefig(out, dpi=150)
 
+def plot_predictions(predictions, out):
+    rows = predictions[
+        (predictions["training_scope"] == "within_benchmark")
+        & (predictions["split"] == "by_run")
+        & (predictions["model"] == "xgboost_sage")
+    ]
+    benchmarks = sorted(rows["benchmark"].unique())
+    fig, axes = plt.subplots(2, 5, figsize=(14, 6))
+
+    for ax, benchmark in zip(axes.flat, benchmarks):
+        b = rows[rows["benchmark"] == benchmark]
+        ax.scatter(b["fitness"], b["prediction"], s=8, alpha=0.3, color=COLORS["xgboost_sage"], linewidths=0)
+        ax.set_title(benchmark)
+        ax.spines[["top", "right"]].set_visible(False)
+
+    fig.supxlabel("actual fitness")
+    fig.supylabel("predicted fitness")
+    fig.suptitle("Predicted vs actual fitness on unseen runs (xgboost_sage, first seed)")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+
+
+def plot_folds(metrics, out):
+    rows = metrics[
+        (metrics["training_scope"] == "within_benchmark")
+        & (metrics["model"] == "xgboost_sage")
+    ]
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    for i, split in enumerate(SPLITS):
+        scores = rows.loc[rows["split"] == split, "spearman"].dropna()
+        # spread the dots sideways a little so they don't sit on top of each other
+        x = i + np.random.default_rng(0).uniform(-0.2, 0.2, len(scores))
+        ax.scatter(x, scores, s=8, alpha=0.25, color=COLORS["xgboost_sage"], linewidths=0)
+        ax.plot([i - 0.3, i + 0.3], [scores.mean()] * 2, color="#0b0b0b", linewidth=2)
+
+    ax.axhline(CHANCE["spearman"], color="#52514e", linestyle="--", linewidth=1)
+    ax.set_xticks(range(len(SPLITS)), SPLITS)
+    ax.set_ylabel("Spearman")
+    ax.set_title("Spearman for every benchmark, fold and seed (black: mean)")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+
+
+def plot_fitness(table, out):
+    # left to right -> easiest benchmark to hardest
+    order = table.groupby("benchmark")["fitness"].median().sort_values(ascending=False).index
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.boxplot([table.loc[table["benchmark"] == b, "fitness"] for b in order], showfliers=False)
+    ax.set_xticks(range(1, len(order) + 1), order)
+    ax.set_ylabel("fitness")
+    ax.set_title("Fitness of every working program, by benchmark")
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+
 
 def main():
     if len(sys.argv) != 2:
@@ -65,6 +124,13 @@ def main():
 
     plot_headline(pd.read_csv(results_dir / "summary.csv"), out_dir / "headline.png")
     plot_benchmarks(pd.read_csv(results_dir / "summary_by_benchmark.csv"), out_dir / "benchmarks.png")
+    plot_folds(pd.read_csv(results_dir / "metrics.csv"), out_dir / "folds.png")
+    
+    # the table this run was evaluated on, as recorded in config.json
+    table = pd.read_csv(json.loads((results_dir / "config.json").read_text())["table"])
+    plot_fitness(table, out_dir / "fitness.png")
+    if (results_dir / "predictions.csv").exists():  # older runs didn't save predictions
+        plot_predictions(pd.read_csv(results_dir / "predictions.csv"), out_dir / "predictions.png")
     print("Saved figures to", out_dir)
 
 

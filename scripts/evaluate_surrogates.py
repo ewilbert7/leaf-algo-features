@@ -135,13 +135,15 @@ def make_folds(table, split, seed):
 # is there a way to this more efficiently using library functions
 def cross_validate(table, features, make_model, split, seed, labels):
     rows = []
+    predicted = []
 
     for fold, (train_pos, test_pos) in enumerate(make_folds(table, split, seed)):
         train, test = table.iloc[train_pos], table.iloc[test_pos]
-        
+
         model = make_model()
         model.fit(train[features], train["fitness"])
         predictions = pd.Series(model.predict(test[features]), index=test.index)
+        predicted.append(test[["id", "benchmark", "fitness"]].assign(**labels, fold=fold, prediction=predictions))
 
         by_benchmark = list(test.groupby("benchmark"))
         if labels["training_scope"] == "pooled":
@@ -162,7 +164,7 @@ def cross_validate(table, features, make_model, split, seed, labels):
                 **scores,
             })
 
-    return rows
+    return rows, predicted
 
 
 def run_evaluation(table, features, seeds, models=None, representation="engineered"):
@@ -170,6 +172,8 @@ def run_evaluation(table, features, seeds, models=None, representation="engineer
     models = MODELS if models is None else models
     table = table.reset_index(drop=True)    # renumber the rows from 0
     rows = []
+    # predictions are only kept for the first seed, to keep the file small
+    predicted = []
 
     for seed in seeds:
         print(f"Seed {seed}", flush=True)
@@ -177,15 +181,17 @@ def run_evaluation(table, features, seeds, models=None, representation="engineer
         # add in a loading bar**
         for model_name, make_model in models.items():
             base = {"representation": representation, "model": model_name}
-            for split in POOLED_SPLITS:
-                labels = {**base, "training_scope": "pooled", "split": split}
-                rows += cross_validate(table, features, make_model, split, seed, labels)
-            for _, subset in table.groupby("benchmark"):
-                for split in WITHIN_SPLITS:
-                    labels = {**base, "training_scope": "within_benchmark", "split": split}
-                    rows += cross_validate(subset, features, make_model, split, seed, labels)
+            jobs = [(table, split, "pooled") for split in POOLED_SPLITS]
+            jobs += [(subset, split, "within_benchmark") for _, subset in table.groupby("benchmark") for split in WITHIN_SPLITS]
 
-    return pd.DataFrame(rows)
+            for data, split, scope in jobs:
+                labels = {**base, "training_scope": scope, "split": split}
+                new_rows, new_predicted = cross_validate(data, features, make_model, split, seed, labels)
+                rows += new_rows
+                if seed == seeds[0]:
+                    predicted += new_predicted
+
+    return pd.DataFrame(rows), pd.concat(predicted)
 
 
 def summarise(metrics):
@@ -247,7 +253,7 @@ def main():
     print(f"{len(table)} programs, {len(features)} features, {args.seeds} seeds")
 
     seeds = list(range(args.seeds))
-    metrics = run_evaluation(table, features, seeds, representation=args.representation)
+    metrics, predictions = run_evaluation(table, features, seeds, representation=args.representation)
     summary = summarise(metrics)
 
     # every run gets its own folder, so earlier results are never overwritten
@@ -255,6 +261,7 @@ def main():
     out_dir = args.out / f"{stamp}-{args.representation}"
     out_dir.mkdir(parents=True)
     metrics.to_csv(out_dir / "metrics.csv", index=False)
+    predictions.to_csv(out_dir / "predictions.csv", index=False)
     summary.to_csv(out_dir / "summary.csv", index=False)
     summarise_by_benchmark(metrics).to_csv(out_dir / "summary_by_benchmark.csv", index=False)
 
